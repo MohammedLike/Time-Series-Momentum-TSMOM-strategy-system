@@ -1,0 +1,69 @@
+# ══════════════════════════════════════════════════════════════════════
+# Asset Universe Definitions
+# Each universe groups tradeable instruments by asset class.
+# We use liquid ETFs as proxies for futures and spot markets.
+# ══════════════════════════════════════════════════════════════════════
+
+equities:
+  description: "US sector & broad-market ETFs"
+  assets:
+    - {ticker: SPY,  name: "S&P 500",         sector: broad}
+    - {ticker: QQQ,  name: "Nasdaq 100",      sector: tech}
+    - {ticker: IWM,  name: "Russell 2000",    sector: small_cap}
+    - {ticker: XLF,  name: "Financials",      sector: financials}
+    - {ticker: XLE,  name: "Energy",          sector: energy}
+    - {ticker: XLV,  name: "Healthcare",      sector: healthcare}
+    - {ticker: XLK,  name: "Technology",      sector: tech}
+    - {ticker: XLI,  name: "Industrials",     sector: industrials}
+    - {ticker: XLP,  name: "Consumer Staples", sector: staples}
+    - {ticker: XLY,  name: "Consumer Disc.",  sector: discretionary}
+    - {ticker: XLU,  name: "Utilities",       sector: utilities}
+    - {ticker: XLRE, name: "Real Estate",     sector: real_estate}
+
+commodities:
+  description: "Commodity ETFs as futures proxies"
+  assets:
+    - {ticker: GLD,  name: "Gold",            sector: precious_metals}
+    - {ticker: SLV,  name: "Silver",          sector: precious_metals}
+    - {ticker: USO,  name: "Crude Oil",       sector: energy}
+    - {ticker: UNG,  name: "Natural Gas",     sector: energy}
+    - {ticker: DBA,  name: "Agriculture",     sector: agriculture}
+
+fixed_income:
+  description: "Treasury & bond ETFs"
+  assets:
+    - {ticker: TLT,  name: "20+ Year Treasury", sector: long_duration}
+    - {ticker: IEF,  name: "7-10 Year Treasury", sector: mid_duration}
+    - {ticker: SHY,  name: "1-3 Year Treasury",  sector: short_duration}
+    - {ticker: LQD,  name: "Inv. Grade Corporate", sector: credit}
+    - {ticker: HYG,  name: "High Yield Corporate", sector: high_yield}
+
+fx:
+  description: "Currency ETFs"
+  assets:
+    - {ticker: UUP,  name: "US Dollar Index", sector: dollar}
+    - {ticker: FXE,  name: "Euro",            sector: major}
+    - {ticker: FXY,  name: "Japanese Yen",    sector: major}
+    - {ticker: FXB,  name: "British Pound",   sector: major}
+    - {ticker: FXA,  name: "Australian Dollar", sector: commodity_fx}
+
+# ── Strategy Presets ──────────────────────────────────────────────────
+
+strategy_presets:
+  conservative:
+    vol_target: 0.08
+    lookbacks: [126, 252]
+    rebalance_frequency: monthly
+    drawdown_threshold: 0.08
+
+  balanced:
+    vol_target: 0.10
+    lookbacks: [21, 63, 126, 252]
+    rebalance_frequency: monthly
+    drawdown_threshold: 0.10
+
+  aggressive:
+    vol_target: 0.15
+    lookbacks: [21, 63]
+    rebalance_frequency: weekly
+    drawdown_threshold: 0.15
