@@ -7,9 +7,13 @@ pandas DataFrames/Series into JSON-serializable structures.
 from __future__ import annotations
 
 import sys
+import time
+import hashlib
+import json
 import logging
 from pathlib import Path
 from functools import lru_cache
+from threading import Lock
 
 import numpy as np
 import pandas as pd
@@ -39,6 +43,38 @@ from app.models.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ── In-memory result cache ──────────────────────────────────────────
+# Caches expensive computation results for 10 minutes.
+_cache: dict[str, tuple[float, object]] = {}
+_cache_lock = Lock()
+CACHE_TTL = 600  # 10 minutes
+
+
+def _cache_key(*args) -> str:
+    raw = json.dumps(args, sort_keys=True, default=str)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_get(key: str):
+    with _cache_lock:
+        if key in _cache:
+            ts, val = _cache[key]
+            if time.time() - ts < CACHE_TTL:
+                logger.info("Cache hit: %s", key[:12])
+                return val
+            del _cache[key]
+    return None
+
+
+def _cache_set(key: str, val):
+    with _cache_lock:
+        _cache[key] = (time.time(), val)
+        # Evict old entries if cache grows too large
+        if len(_cache) > 50:
+            oldest = min(_cache, key=lambda k: _cache[k][0])
+            del _cache[oldest]
+
 
 # Downsample large time series to keep API responses fast
 MAX_POINTS = 2000
@@ -73,17 +109,67 @@ def _build_settings(req: BacktestRequest) -> AppSettings:
     )
 
 
+CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+
+
 @lru_cache(maxsize=1)
 def _get_data_manager() -> DataManager:
-    return DataManager(cache_dir=PROJECT_ROOT / "data" / "cache")
+    return DataManager(cache_dir=CACHE_DIR)
+
+
+def _get_prices(tickers: list[str], start_date: str, end_date: str | None = None) -> pd.DataFrame:
+    """Load prices, using cached superset files when exact cache key is missing.
+
+    The DataManager caches by exact sorted ticker list. If the user requests
+    a subset of a previously-cached universe, we load the superset from cache
+    and filter columns, avoiding a network call.
+    """
+    dm = _get_data_manager()
+    try:
+        return dm.get_close_prices(tickers, start_date, end_date)
+    except Exception:
+        # Exact cache miss and network failed — try to find a cached superset
+        requested = set(tickers)
+        for parquet_file in sorted(CACHE_DIR.glob("prices_*.parquet"), key=lambda p: -p.stat().st_size):
+            try:
+                df = pd.read_parquet(parquet_file)
+                # Handle MultiIndex columns (yfinance format)
+                if isinstance(df.columns, pd.MultiIndex):
+                    if "Close" in df.columns.get_level_values(0):
+                        close = df["Close"]
+                    else:
+                        close = df.xs("Close", axis=1, level=0)
+                else:
+                    close = df
+
+                available = set(close.columns)
+                if requested.issubset(available):
+                    logger.info("Using cached superset from %s", parquet_file.name)
+                    result = close[tickers].dropna(how="all")
+                    if start_date:
+                        result = result[result.index >= start_date]
+                    if end_date:
+                        result = result[result.index <= end_date]
+                    return result
+            except Exception:
+                continue
+
+        raise ValueError(
+            f"No cached data found containing {tickers}. "
+            "Network download also failed. Check your internet connection or cache."
+        )
 
 
 def run_backtest(req: BacktestRequest) -> BacktestResponse:
     """Execute a full backtest and return structured results."""
-    settings = _build_settings(req)
-    dm = _get_data_manager()
+    key = _cache_key("backtest", req.model_dump())
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
 
-    prices = dm.get_close_prices(req.tickers, req.start_date, req.end_date)
+    settings = _build_settings(req)
+
+    prices = _get_prices(req.tickers, req.start_date, req.end_date)
     prices = align_and_clean(prices)
 
     # Run engine
@@ -97,7 +183,7 @@ def run_backtest(req: BacktestRequest) -> BacktestResponse:
         benchmark_returns = spy_prices.pct_change().dropna()
     else:
         try:
-            spy = dm.get_close_prices(["SPY"], req.start_date, req.end_date)
+            spy = _get_prices(["SPY"], req.start_date, req.end_date)
             benchmark_returns = spy["SPY"].pct_change().dropna()
         except Exception:
             pass
@@ -211,7 +297,7 @@ def run_backtest(req: BacktestRequest) -> BacktestResponse:
     m = result.metrics
     metrics = MetricsResponse(**{k: m.get(k, 0) for k in MetricsResponse.model_fields if k in m})
 
-    return BacktestResponse(
+    result_response = BacktestResponse(
         metrics=metrics,
         equity_curve=_series_to_points(equity),
         drawdown=_series_to_points(dd_data["drawdown"]),
@@ -231,16 +317,22 @@ def run_backtest(req: BacktestRequest) -> BacktestResponse:
         long_exposure=_series_to_points(long_exp),
         short_exposure=_series_to_points(short_exp),
     )
+    _cache_set(key, result_response)
+    return result_response
 
 
 def get_signals(tickers: list[str], start_date: str, lookbacks: list[int] | None = None) -> SignalResponse:
     """Get current signal state for all assets."""
-    dm = _get_data_manager()
+    key = _cache_key("signals", sorted(tickers), start_date, lookbacks)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     settings = AppSettings()
     if lookbacks:
         settings.momentum_lookbacks = lookbacks
 
-    prices = dm.get_close_prices(tickers, start_date)
+    prices = _get_prices(tickers, start_date)
     prices = align_and_clean(prices)
     returns = compute_returns(prices)
     returns = winsorize_returns(returns)
@@ -272,18 +364,24 @@ def get_signals(tickers: list[str], start_date: str, lookbacks: list[int] | None
         elif isinstance(comp_data, pd.Series):
             signal_components[comp_name] = _series_to_points(comp_data)
 
-    return SignalResponse(
+    result = SignalResponse(
         heatmap=heatmap,
         assets=list(final.columns),
         current_signals=current_signals,
         signal_components=signal_components,
     )
+    _cache_set(key, result)
+    return result
 
 
 def get_regime(tickers: list[str], start_date: str) -> RegimeResponse:
     """Get regime detection analysis."""
-    dm = _get_data_manager()
-    prices = dm.get_close_prices(tickers, start_date)
+    key = _cache_key("regime", sorted(tickers), start_date)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
+    prices = _get_prices(tickers, start_date)
     prices = align_and_clean(prices)
     returns = compute_returns(prices)
     returns = winsorize_returns(returns)
@@ -338,7 +436,7 @@ def get_regime(tickers: list[str], start_date: str) -> RegimeResponse:
         },
     }
 
-    return RegimeResponse(
+    result = RegimeResponse(
         regime_history=regime_history,
         current_regime=current_regime,
         current_probabilities={
@@ -347,13 +445,19 @@ def get_regime(tickers: list[str], start_date: str) -> RegimeResponse:
         },
         regime_stats=regime_stats,
     )
+    _cache_set(key, result)
+    return result
 
 
 def get_risk(tickers: list[str], start_date: str, vol_target: float = 0.10) -> RiskResponse:
     """Get risk analysis data."""
-    dm = _get_data_manager()
+    key = _cache_key("risk", sorted(tickers), start_date, vol_target)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
     settings = AppSettings(vol_target=vol_target)
-    prices = dm.get_close_prices(tickers, start_date)
+    prices = _get_prices(tickers, start_date)
     prices = align_and_clean(prices)
 
     engine = BacktestEngine(settings)
@@ -397,7 +501,7 @@ def get_risk(tickers: list[str], start_date: str, vol_target: float = 0.10) -> R
     if total_risk > 0:
         risk_contrib = {k: round(v / total_risk, 4) for k, v in risk_contrib.items()}
 
-    return RiskResponse(
+    risk_result = RiskResponse(
         var_95=round(float(result.metrics.get("var_95", 0)), 6),
         var_99=round(float(result.metrics.get("var_99", 0)), 6),
         cvar_95=round(float(result.metrics.get("cvar_95", 0)), 6),
@@ -410,14 +514,15 @@ def get_risk(tickers: list[str], start_date: str, vol_target: float = 0.10) -> R
         drawdown_series=_series_to_points(dd_data["drawdown"]),
         drawdown_duration=_series_to_points(dd_data["drawdown_duration"]),
     )
+    _cache_set(key, risk_result)
+    return risk_result
 
 
 def get_live_update(tickers: list[str]) -> LiveUpdate:
     """Simulate a live trading snapshot."""
-    dm = _get_data_manager()
     settings = AppSettings()
 
-    prices = dm.get_close_prices(tickers, "2020-01-01")
+    prices = _get_prices(tickers, "2020-01-01")
     prices = align_and_clean(prices)
     returns = compute_returns(prices)
     returns = winsorize_returns(returns)
@@ -490,3 +595,187 @@ def get_universe() -> UniverseResponse:
         ]
 
     return UniverseResponse(universes=universe_dict, presets=presets)
+
+
+def _grade(val: float, thresholds: list[tuple[float, str]]) -> str:
+    for t, label in thresholds:
+        if val >= t:
+            return label
+    return thresholds[-1][1]
+
+
+def _signal_verdict(signal: float) -> str:
+    if signal > 0.5:
+        return "Strong upward momentum — the trend is clearly in your favor."
+    if signal > 0.1:
+        return "Mild positive momentum — a gentle tailwind, not a strong trend."
+    if signal > -0.1:
+        return "Neutral — no clear direction right now. Best to stay patient."
+    if signal > -0.5:
+        return "Mild negative momentum — the wind is turning against this asset."
+    return "Strong downward momentum — this asset is in a clear downtrend."
+
+
+def generate_research_report(tickers: list[str], start_date: str = "2005-01-01") -> dict:
+    """Generate a plain-English equity research report for non-technical investors."""
+    key = _cache_key("research", sorted(tickers), start_date)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
+    settings = AppSettings()
+    prices = _get_prices(tickers, start_date)
+    prices = align_and_clean(prices)
+    returns = compute_returns(prices)
+    returns = winsorize_returns(returns)
+
+    # Run backtest
+    engine = BacktestEngine(settings)
+    benchmark_returns = None
+    if "SPY" in prices.columns:
+        benchmark_returns = prices["SPY"].pct_change().dropna()
+    result = engine.run(prices, benchmark_returns)
+    m = result.metrics
+
+    # Signals
+    gen = CompositeSignalGenerator(settings)
+    signals = gen.generate(returns)
+    latest_signals = signals.iloc[-1]
+
+    # Volatility
+    vol = ewma_volatility(returns)
+    latest_vol = vol.iloc[-1]
+
+    # Regime
+    market_returns = returns.mean(axis=1)
+    detector = HMMRegimeDetector(n_regimes=2)
+    try:
+        regime_score = detector.fit_predict(market_returns)
+        regime = "Trending" if float(regime_score.iloc[-1]) > 0.5 else "Mean-Reverting"
+    except Exception:
+        regime = "Unknown"
+
+    # Per-asset analysis
+    asset_reports = []
+    for ticker in tickers:
+        if ticker not in returns.columns:
+            continue
+        asset_ret = returns[ticker]
+        total_ret = float((1 + asset_ret).prod() - 1)
+        ann_ret = float((1 + total_ret) ** (252 / max(len(asset_ret), 1)) - 1)
+        ann_vol = float(asset_ret.std() * np.sqrt(252))
+        sharpe = ann_ret / ann_vol if ann_vol > 0 else 0
+        max_dd = float((asset_ret.cumsum() - asset_ret.cumsum().cummax()).min())
+        sig = float(latest_signals.get(ticker, 0))
+        cur_vol = float(latest_vol.get(ticker, 0)) * np.sqrt(252)
+        last_weight = float(result.weights_history[ticker].iloc[-1]) if ticker in result.weights_history.columns else 0
+
+        # Recent performance (last 3 months)
+        recent_ret = float(asset_ret.tail(63).sum()) if len(asset_ret) >= 63 else float(asset_ret.sum())
+
+        # Risk level
+        risk_level = _grade(cur_vol, [(0.30, "Very High"), (0.20, "High"), (0.12, "Moderate"), (0.05, "Low"), (0, "Very Low")])
+
+        # Momentum verdict
+        momentum = _signal_verdict(sig)
+
+        # Overall recommendation
+        if sig > 0.3 and sharpe > 0.3:
+            recommendation = "Favorable"
+            rec_color = "green"
+            rec_detail = f"{ticker} shows positive momentum with decent risk-adjusted returns. The strategy is currently allocating {abs(last_weight)*100:.1f}% to this position."
+        elif sig < -0.3:
+            recommendation = "Unfavorable"
+            rec_color = "red"
+            rec_detail = f"{ticker} is in a downtrend. The model suggests reducing or avoiding exposure. Current signal: {sig:.2f}."
+        else:
+            recommendation = "Neutral"
+            rec_color = "yellow"
+            rec_detail = f"{ticker} is not showing a strong trend in either direction. Consider holding current positions but don't add more."
+
+        asset_reports.append({
+            "ticker": ticker,
+            "total_return": round(total_ret, 4),
+            "annualized_return": round(ann_ret, 4),
+            "annualized_vol": round(ann_vol, 4),
+            "sharpe_ratio": round(sharpe, 2),
+            "max_drawdown": round(max_dd, 4),
+            "current_signal": round(sig, 4),
+            "current_vol": round(cur_vol, 4),
+            "current_weight": round(last_weight, 4),
+            "recent_3m_return": round(recent_ret, 4),
+            "risk_level": risk_level,
+            "momentum_verdict": momentum,
+            "recommendation": recommendation,
+            "recommendation_color": rec_color,
+            "recommendation_detail": rec_detail,
+        })
+
+    # Sort by recommendation: Favorable first
+    order = {"Favorable": 0, "Neutral": 1, "Unfavorable": 2}
+    asset_reports.sort(key=lambda x: order.get(x["recommendation"], 1))
+
+    # Portfolio summary in plain English
+    cagr = m.get("cagr", 0)
+    sharpe = m.get("sharpe_ratio", 0)
+    max_dd = m.get("max_drawdown", 0)
+    vol = m.get("annualized_vol", 0)
+
+    portfolio_grade = _grade(sharpe, [(1.0, "Excellent"), (0.5, "Good"), (0.2, "Fair"), (0, "Poor"), (-999, "Very Poor")])
+    risk_grade = _grade(-abs(max_dd), [(-0.05, "Conservative"), (-0.10, "Moderate"), (-0.20, "Aggressive"), (-999, "Very Aggressive")])
+
+    n_favorable = sum(1 for a in asset_reports if a["recommendation"] == "Favorable")
+    n_unfavorable = sum(1 for a in asset_reports if a["recommendation"] == "Unfavorable")
+
+    summary = {
+        "headline": f"Portfolio returned {cagr*100:.1f}% per year with a Sharpe ratio of {sharpe:.2f}",
+        "plain_english": (
+            f"If you had invested $10,000 using this strategy since {start_date}, "
+            f"it would have grown at roughly {cagr*100:.1f}% per year. "
+            f"The worst drop from peak was {abs(max_dd)*100:.1f}%, "
+            f"meaning your portfolio would have temporarily lost that much before recovering. "
+            f"Overall volatility (how much your portfolio swings day to day) is {vol*100:.1f}% annually."
+        ),
+        "market_regime": regime,
+        "regime_explanation": (
+            "The market is currently in a TRENDING phase — momentum strategies tend to perform well."
+            if regime == "Trending"
+            else "The market is currently in a MEAN-REVERTING phase — momentum may underperform. Consider reducing position sizes."
+        ),
+        "portfolio_grade": portfolio_grade,
+        "risk_profile": risk_grade,
+        "key_takeaways": [
+            f"{n_favorable} out of {len(asset_reports)} assets show favorable momentum right now."
+            if n_favorable > 0
+            else "No assets are showing strong favorable momentum — patience is key.",
+            f"Watch out: {n_unfavorable} assets are in a downtrend."
+            if n_unfavorable > 0
+            else "Good news: no assets are in a significant downtrend.",
+            f"Your portfolio risk is {risk_grade.lower()} — the strategy targets {settings.vol_target*100:.0f}% annual volatility.",
+            f"The drawdown protection kicks in at {settings.drawdown_threshold*100:.0f}% loss, automatically reducing exposure.",
+        ],
+        "what_to_do": (
+            "The strategy is fully automated — it adjusts positions based on momentum signals and volatility targets. "
+            "You don't need to do anything. The model rebalances monthly and cuts exposure during drawdowns."
+        ),
+    }
+
+    metrics_explained = {
+        "cagr": {"value": round(cagr, 4), "label": "Annual Return", "explanation": f"The strategy earns about {cagr*100:.1f}% per year on average."},
+        "sharpe_ratio": {"value": round(sharpe, 2), "label": "Risk-Adjusted Return", "explanation": f"For every unit of risk taken, you earn {sharpe:.2f} units of return. Above 1.0 is excellent, above 0.5 is good."},
+        "max_drawdown": {"value": round(max_dd, 4), "label": "Worst Drop", "explanation": f"The biggest peak-to-trough decline was {abs(max_dd)*100:.1f}%. This is the worst period you'd have experienced."},
+        "annualized_vol": {"value": round(vol, 4), "label": "Volatility", "explanation": f"Your portfolio value swings about {vol*100:.1f}% per year. Lower is smoother."},
+        "hit_rate": {"value": round(m.get("hit_rate_daily", 0), 4), "label": "Win Rate", "explanation": f"The strategy is profitable on {m.get('hit_rate_daily', 0)*100:.1f}% of trading days."},
+        "calmar_ratio": {"value": round(m.get("calmar_ratio", 0), 2), "label": "Return per Drawdown", "explanation": "How much return you get per unit of worst-case loss. Higher is better."},
+    }
+
+    report = {
+        "summary": summary,
+        "asset_reports": asset_reports,
+        "metrics_explained": metrics_explained,
+        "generated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "data_period": f"{start_date} to present",
+        "n_assets": len(asset_reports),
+    }
+    _cache_set(key, report)
+    return report

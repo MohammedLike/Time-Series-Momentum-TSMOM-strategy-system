@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 
@@ -12,7 +13,7 @@ from app.models.schemas import (
 )
 from app.services.engine import (
     run_backtest, get_signals, get_regime, get_risk,
-    get_live_update, get_universe,
+    get_live_update, get_universe, generate_research_report,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ router = APIRouter()
 async def api_run_backtest(req: BacktestRequest):
     """Run a full backtest with custom parameters."""
     try:
-        return run_backtest(req)
+        return await asyncio.to_thread(run_backtest, req)
     except Exception as e:
         logger.exception("Backtest failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -39,7 +40,7 @@ async def api_get_signals(
     try:
         ticker_list = [t.strip() for t in tickers.split(",")]
         lb_list = [int(x.strip()) for x in lookbacks.split(",")]
-        return get_signals(ticker_list, start_date, lb_list)
+        return await asyncio.to_thread(get_signals, ticker_list, start_date, lb_list)
     except Exception as e:
         logger.exception("Signal generation failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -53,7 +54,7 @@ async def api_get_regime(
     """Get market regime detection results."""
     try:
         ticker_list = [t.strip() for t in tickers.split(",")]
-        return get_regime(ticker_list, start_date)
+        return await asyncio.to_thread(get_regime, ticker_list, start_date)
     except Exception as e:
         logger.exception("Regime detection failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -68,7 +69,7 @@ async def api_get_risk(
     """Get risk analysis for the strategy."""
     try:
         ticker_list = [t.strip() for t in tickers.split(",")]
-        return get_risk(ticker_list, start_date, vol_target)
+        return await asyncio.to_thread(get_risk, ticker_list, start_date, vol_target)
     except Exception as e:
         logger.exception("Risk analysis failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -81,7 +82,7 @@ async def api_live_update(
     """Get a simulated live trading snapshot."""
     try:
         ticker_list = [t.strip() for t in tickers.split(",")]
-        return get_live_update(ticker_list)
+        return await asyncio.to_thread(get_live_update, ticker_list)
     except Exception as e:
         logger.exception("Live update failed")
         raise HTTPException(status_code=500, detail=str(e))
@@ -98,7 +99,7 @@ async def api_get_performance(
             tickers=[t.strip() for t in tickers.split(",")],
             start_date=start_date,
         )
-        result = run_backtest(req)
+        result = await asyncio.to_thread(run_backtest, req)
         return {
             "metrics": result.metrics,
             "equity_curve": result.equity_curve,
@@ -113,6 +114,20 @@ async def api_get_performance(
 async def api_get_universe():
     """Get available asset universes and strategy presets."""
     return get_universe()
+
+
+@router.get("/research-report")
+async def api_research_report(
+    tickers: str = "SPY,QQQ,IWM,TLT,IEF,GLD,XLF,XLE,XLK,XLV",
+    start_date: str = "2005-01-01",
+):
+    """Generate plain-English equity research report for non-technical investors."""
+    try:
+        ticker_list = [t.strip() for t in tickers.split(",")]
+        return await asyncio.to_thread(generate_research_report, ticker_list, start_date)
+    except Exception as e:
+        logger.exception("Research report generation failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/health")

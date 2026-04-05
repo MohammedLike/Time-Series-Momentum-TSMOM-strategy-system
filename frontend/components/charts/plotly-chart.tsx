@@ -2,14 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { useTheme } from "next-themes";
-import type { Data, Layout, Config } from "plotly.js";
+import type { Data, Config } from "plotly.js";
 
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
-// Institutional color palette
 export const COLORS = {
-  primary: "#6366f1",
-  secondary: "#8b5cf6",
+  primary: "#7c3aed",
+  secondary: "#a855f7",
   profit: "#10b981",
   loss: "#ef4444",
   warning: "#f59e0b",
@@ -19,9 +18,9 @@ export const COLORS = {
   pink: "#ec4899",
   slate: "#64748b",
   series: [
-    "#6366f1", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b",
-    "#ef4444", "#ec4899", "#8b5cf6", "#f97316", "#64748b",
-    "#14b8a6", "#a855f7", "#f43f5e", "#0ea5e9", "#84cc16",
+    "#7c3aed", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b",
+    "#ef4444", "#ec4899", "#a855f7", "#f97316", "#64748b",
+    "#14b8a6", "#8b5cf6", "#f43f5e", "#0ea5e9", "#84cc16",
   ],
 };
 
@@ -58,14 +57,14 @@ export function PlotlyChart({
       color: isDark ? "#94a3b8" : "#64748b",
     },
     xaxis: {
-      gridcolor: isDark ? "#1e293b" : "#f1f5f9",
-      zerolinecolor: isDark ? "#334155" : "#e2e8f0",
+      gridcolor: isDark ? "rgba(148,163,184,0.06)" : "rgba(100,116,139,0.08)",
+      zerolinecolor: isDark ? "rgba(148,163,184,0.1)" : "rgba(100,116,139,0.12)",
       showgrid: true,
       gridwidth: 1,
     },
     yaxis: {
-      gridcolor: isDark ? "#1e293b" : "#f1f5f9",
-      zerolinecolor: isDark ? "#334155" : "#e2e8f0",
+      gridcolor: isDark ? "rgba(148,163,184,0.06)" : "rgba(100,116,139,0.08)",
+      zerolinecolor: isDark ? "rgba(148,163,184,0.1)" : "rgba(100,116,139,0.12)",
       showgrid: true,
       gridwidth: 1,
     },
@@ -79,9 +78,9 @@ export function PlotlyChart({
       x: 1,
     },
     hoverlabel: {
-      bgcolor: isDark ? "#1e293b" : "#ffffff",
-      bordercolor: isDark ? "#334155" : "#e2e8f0",
-      font: { size: 11, color: isDark ? "#e2e8f0" : "#1e293b" },
+      bgcolor: isDark ? "rgba(15,23,42,0.95)" : "rgba(255,255,255,0.95)",
+      bordercolor: isDark ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.2)",
+      font: { size: 11, color: isDark ? "#e2e8f0" : "#1e293b", family: "Inter" },
     },
     hovermode: "x unified",
     ...layout,

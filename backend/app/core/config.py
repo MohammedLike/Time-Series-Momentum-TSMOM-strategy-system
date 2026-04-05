@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    cors_origins: list[str] = ["*"]
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./tsmom.db"

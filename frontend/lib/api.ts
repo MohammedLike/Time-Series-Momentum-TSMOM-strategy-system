@@ -163,6 +163,42 @@ export interface UniverseResponse {
   presets: Record<string, Record<string, unknown>>;
 }
 
+export interface AssetReport {
+  ticker: string;
+  total_return: number;
+  annualized_return: number;
+  annualized_vol: number;
+  sharpe_ratio: number;
+  max_drawdown: number;
+  current_signal: number;
+  current_vol: number;
+  current_weight: number;
+  recent_3m_return: number;
+  risk_level: string;
+  momentum_verdict: string;
+  recommendation: string;
+  recommendation_color: string;
+  recommendation_detail: string;
+}
+
+export interface ResearchReport {
+  summary: {
+    headline: string;
+    plain_english: string;
+    market_regime: string;
+    regime_explanation: string;
+    portfolio_grade: string;
+    risk_profile: string;
+    key_takeaways: string[];
+    what_to_do: string;
+  };
+  asset_reports: AssetReport[];
+  metrics_explained: Record<string, { value: number; label: string; explanation: string }>;
+  generated_at: string;
+  data_period: string;
+  n_assets: number;
+}
+
 // API functions
 export const api = {
   runBacktest: (req: BacktestRequest) =>
@@ -194,6 +230,11 @@ export const api = {
   getPerformance: (tickers: string[], startDate = "2005-01-01") =>
     fetchApi<{ metrics: MetricsResponse; equity_curve: TimeSeriesPoint[]; benchmark_equity?: TimeSeriesPoint[] }>(
       `/get-performance?tickers=${tickers.join(",")}&start_date=${startDate}`
+    ),
+
+  getResearchReport: (tickers: string[], startDate = "2005-01-01") =>
+    fetchApi<ResearchReport>(
+      `/research-report?tickers=${tickers.join(",")}&start_date=${startDate}`
     ),
 
   health: () => fetchApi<{ status: string }>("/health"),

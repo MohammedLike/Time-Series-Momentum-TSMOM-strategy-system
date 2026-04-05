@@ -27,11 +27,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${jetbrainsMono.variable} font-sans antialiased noise-overlay`}>
         <Providers>
+          <div className="bg-mesh" />
           <div className="flex min-h-screen">
             <Sidebar />
-            <main className="flex-1 ml-[220px] p-6 lg:p-8">
+            <main className="flex-1 ml-[240px] p-6 lg:p-8">
               {children}
             </main>
           </div>
