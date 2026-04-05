@@ -7,7 +7,6 @@ feature for momentum strategies, protecting against "momentum crashes"
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 

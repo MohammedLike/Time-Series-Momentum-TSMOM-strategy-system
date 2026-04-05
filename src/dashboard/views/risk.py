@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import streamlit as st
-import pandas as pd
 import numpy as np
 
 from src.dashboard.components.charts import (
@@ -16,7 +15,6 @@ from src.dashboard.components.charts import (
 from src.risk.var import rolling_var, rolling_cvar
 from src.risk.stress import run_stress_tests
 from src.utils.types import BacktestResult
-from src.data.cleaning import compute_returns
 import plotly.graph_objects as go
 
 

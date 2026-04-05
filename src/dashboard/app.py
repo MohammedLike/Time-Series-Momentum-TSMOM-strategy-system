@@ -15,11 +15,10 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 
 from config.settings import AppSettings
 from src.data.provider import DataManager
-from src.data.universe import load_universes, get_all_tickers, load_strategy_presets
+from src.data.universe import load_universes, load_strategy_presets
 from src.data.cleaning import align_and_clean
 from src.backtest.engine import BacktestEngine
 from src.utils.types import BacktestResult

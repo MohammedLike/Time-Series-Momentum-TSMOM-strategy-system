@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from src.dashboard.components.charts import COLORS, _base_layout
+from src.dashboard.components.charts import COLORS
 from src.utils.types import BacktestResult
 from src.data.cleaning import compute_returns
 from src.risk.metrics import compute_all_metrics

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
 import pandas as pd
 
 from config.settings import AppSettings
@@ -22,7 +21,7 @@ from src.portfolio.construction import (
     apply_rebalance_schedule,
     compute_rebalance_mask,
 )
-from src.risk.drawdown import DrawdownControlOverlay, drawdown_series
+from src.risk.drawdown import DrawdownControlOverlay
 from src.risk.metrics import compute_all_metrics
 from src.signals.composite import CompositeSignalGenerator
 from src.signals.volatility import ewma_volatility

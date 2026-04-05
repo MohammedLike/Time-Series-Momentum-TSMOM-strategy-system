@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import streamlit as st
-import pandas as pd
 import plotly.graph_objects as go
 
 from src.dashboard.components.charts import (

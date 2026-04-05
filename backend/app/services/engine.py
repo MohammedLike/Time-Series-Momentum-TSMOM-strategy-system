@@ -26,11 +26,11 @@ from config.settings import AppSettings
 from src.backtest.engine import BacktestEngine
 from src.data.provider import DataManager
 from src.data.cleaning import compute_returns, winsorize_returns, align_and_clean
-from src.data.universe import load_universes, load_strategy_presets, get_ticker_metadata
+from src.data.universe import load_universes, load_strategy_presets
 from src.signals.composite import CompositeSignalGenerator
 from src.signals.volatility import ewma_volatility
 from src.signals.regime import HMMRegimeDetector
-from src.risk.metrics import compute_all_metrics, rolling_sharpe, monthly_returns_table
+from src.risk.metrics import rolling_sharpe, monthly_returns_table
 from src.risk.stress import run_stress_tests
 from src.risk.drawdown import drawdown_series
 from src.risk.var import rolling_var, rolling_cvar
